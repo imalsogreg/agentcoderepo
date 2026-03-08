@@ -1,0 +1,9 @@
+# flyctl launch added from .gitignore
+target
+result
+**/.direnv
+.env
+
+# flyctl launch added from .jj/.gitignore
+.jj/*
+fly.toml

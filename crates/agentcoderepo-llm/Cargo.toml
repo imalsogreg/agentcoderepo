@@ -1,0 +1,15 @@
+[package]
+name = "agentcoderepo-llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentcoderepo-types.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+async-openai.workspace = true

@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/agentcoderepo-server",
+    "crates/agentcoderepo-git",
+    "crates/agentcoderepo-store",
+    "crates/agentcoderepo-types",
+    "crates/agentcoderepo-llm",
+    "crates/agentcoderepo-index",
+    "crates/agentcoderepo-test",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+# Internal crates
+agentcoderepo-server = { path = "crates/agentcoderepo-server" }
+agentcoderepo-git = { path = "crates/agentcoderepo-git" }
+agentcoderepo-store = { path = "crates/agentcoderepo-store" }
+agentcoderepo-types = { path = "crates/agentcoderepo-types" }
+agentcoderepo-llm = { path = "crates/agentcoderepo-llm" }
+agentcoderepo-index = { path = "crates/agentcoderepo-index" }
+agentcoderepo-test = { path = "crates/agentcoderepo-test" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8" }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+turso = "0.5"
+
+# S3 / Tigris
+aws-sdk-s3 = "1"
+aws-config = "1"
+
+# Auth
+oauth2 = { version = "4", features = ["reqwest"] }
+
+# Crypto
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+ssh-key = { version = "0.6", features = ["ed25519"] }
+rand = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Testing
+wiremock = "0.6"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async utilities
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Encoding
+base64 = "0.22"
+
+# OpenAI
+async-openai = { version = "0.33", features = ["chat-completion", "embedding"] }
+
+# Hashing
+sha2 = "0.10"
+
+# TOML parsing
+toml = "0.8"
+
+# Env
+dotenvy = "0.15"
+
+# Misc
+bytes = "1"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+async-trait = "0.1"

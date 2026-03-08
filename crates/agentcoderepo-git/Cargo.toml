@@ -1,0 +1,13 @@
+[package]
+name = "agentcoderepo-git"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum = { workspace = true, features = ["macros"] }
+anyhow.workspace = true
+tokio = { workspace = true, features = ["process"] }
+tracing.workspace = true
+tokio-util.workspace = true
+http-body-util = "0.1"
+serde = { workspace = true, features = ["derive"] }

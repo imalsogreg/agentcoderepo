@@ -1,0 +1,16 @@
+[package]
+name = "agentcoderepo-index"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentcoderepo-types.workspace = true
+agentcoderepo-llm.workspace = true
+turso.workspace = true
+tokio = { workspace = true, features = ["process"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+sha2.workspace = true
