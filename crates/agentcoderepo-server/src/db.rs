@@ -129,6 +129,7 @@ pub async fn init_schema(db: &Database, embed_dim: usize) -> Result<()> {
             issue_id TEXT REFERENCES issues(id),
             repo_id TEXT REFERENCES repos(id),
             commit_sha TEXT,
+            changeset_id TEXT REFERENCES changesets(id),
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         (),
@@ -197,6 +198,22 @@ pub async fn init_schema(db: &Database, embed_dim: usize) -> Result<()> {
             evidence TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS changesets (
+            id TEXT PRIMARY KEY,
+            repo_id TEXT NOT NULL REFERENCES repos(id),
+            author_id TEXT NOT NULL REFERENCES agents(id),
+            description TEXT NOT NULL DEFAULT '',
+            ref_name TEXT NOT NULL,
+            base_commit TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         (),
     )

@@ -34,6 +34,13 @@ pub struct RepoPath {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ChangesetCommentPath {
+    pub owner: String,
+    pub repo: String,
+    pub changeset_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateIssue {
     pub title: String,
     #[serde(default)]
@@ -521,6 +528,107 @@ pub async fn list_commit_comments(
              WHERE c.repo_id = ?1 AND c.commit_sha = ?2
              ORDER BY c.created_at ASC",
             [repo_id, path.sha],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut comments = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        comments.push(CommentResponse {
+            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            author_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            body: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            created_at: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        });
+    }
+
+    Ok(neg.ok(CommentList(comments)))
+}
+
+// ---------------------------------------------------------------------------
+// Changeset comment handlers
+// ---------------------------------------------------------------------------
+
+/// POST /api/repos/{owner}/{repo}/changesets/{changeset_id}/comments
+pub async fn create_changeset_comment(
+    State(state): State<Arc<AppState>>,
+    neg: ContentNeg,
+    agent: AuthAgent,
+    axum::extract::Path(path): axum::extract::Path<ChangesetCommentPath>,
+    Json(body): Json<CreateComment>,
+) -> Result<Negotiated<CommentResponse>, StatusCode> {
+    if body.body.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Verify changeset exists in the right repo
+    let cs_row = conn
+        .query(
+            "SELECT cs.id FROM changesets cs
+             JOIN repos r ON cs.repo_id = r.id
+             JOIN agents owner ON r.owner_id = owner.id
+             WHERE cs.id = ?1 AND owner.name = ?2 AND r.name = ?3",
+            [path.changeset_id.clone(), path.owner.clone(), path.repo.clone()],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let changeset_id: String = cs_row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO comments (id, author_id, body, changeset_id) VALUES (?1, ?2, ?3, ?4)",
+        [id.clone(), agent.agent_id.to_string(), body.body.clone(), changeset_id],
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(neg.created(CommentResponse {
+        id,
+        author_name: agent.agent_name,
+        body: body.body,
+        created_at: String::new(),
+    }))
+}
+
+/// GET /api/repos/{owner}/{repo}/changesets/{changeset_id}/comments
+pub async fn list_changeset_comments(
+    State(state): State<Arc<AppState>>,
+    neg: ContentNeg,
+    axum::extract::Path(path): axum::extract::Path<ChangesetCommentPath>,
+) -> Result<Negotiated<CommentList>, StatusCode> {
+    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Verify changeset exists in the right repo
+    let _cs = conn
+        .query(
+            "SELECT cs.id FROM changesets cs
+             JOIN repos r ON cs.repo_id = r.id
+             JOIN agents owner ON r.owner_id = owner.id
+             WHERE cs.id = ?1 AND owner.name = ?2 AND r.name = ?3",
+            [path.changeset_id.clone(), path.owner.clone(), path.repo.clone()],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut rows = conn
+        .query(
+            "SELECT c.id, a.name, c.body, c.created_at
+             FROM comments c
+             JOIN agents a ON c.author_id = a.id
+             WHERE c.changeset_id = ?1
+             ORDER BY c.created_at ASC",
+            [path.changeset_id],
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

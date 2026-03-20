@@ -53,6 +53,30 @@ async fn git_auth(dir: &Path, token: &str, args: &[&str]) -> String {
     .unwrap()
 }
 
+struct GitResult {
+    success: bool,
+}
+
+async fn git_auth_may_fail(dir: &Path, token: &str, args: &[&str]) -> GitResult {
+    let dir = dir.to_path_buf();
+    let header = format!("Authorization: Bearer {token}");
+    let mut full_args = vec!["-c".to_string(), format!("http.extraHeader={header}")];
+    full_args.extend(args.iter().map(|s| s.to_string()));
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(&full_args)
+            .current_dir(&dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .expect("failed to run git");
+        GitResult {
+            success: output.status.success(),
+        }
+    })
+    .await
+    .unwrap()
+}
+
 /// Push a Rust file, verify the LLM was called for extraction and embedding,
 /// and that signatures were stored in the database.
 #[tokio::test]
@@ -145,9 +169,9 @@ pub fn greet(name: &str) { println!("Hello, {name}!"); }
 }
 
 /// Push to a repo that hasn't been created via the API — indexing should be skipped
-/// gracefully (the post-receive hook can't find a repo_id).
+/// Push to a repo not created via API is rejected by ref-level auth.
 #[tokio::test]
-async fn push_to_uncreated_repo_skips_indexing() {
+async fn push_to_uncreated_repo_is_rejected() {
     let harness = TestHarness::start().await.unwrap();
     let agent = harness.registered_agent().await.unwrap();
     let token = agent.bearer_token();
@@ -166,12 +190,8 @@ async fn push_to_uncreated_repo_skips_indexing() {
 
     let remote_url = format!("{}/git/{}/uncreated-repo", harness.base_url, agent.name);
     git(&repo_dir, &["remote", "add", "origin", &remote_url]).await;
-    git_auth(&repo_dir, &token, &["push", "origin", "main"]).await;
 
-    // Push should succeed even without a repo record — indexing is just skipped
-    let requests = harness.mock_llm.recorded_requests().await;
-    assert!(
-        requests.is_empty(),
-        "LLM should NOT have been called — repo not in DB"
-    );
+    // Push should fail — ref check rejects because repo doesn't exist in DB
+    let result = git_auth_may_fail(&repo_dir, &token, &["push", "origin", "main"]).await;
+    assert!(!result.success, "push to uncreated repo should be rejected");
 }

@@ -34,7 +34,11 @@ RUN cargo build --release --bin agentcoderepo-server
 # Runtime image
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates git curl && rm -rf /var/lib/apt/lists/*
+
+# Install jj (jujutsu) for changeset operations
+RUN curl -fsSL https://github.com/jj-vcs/jj/releases/latest/download/jj-v0.28.2-x86_64-unknown-linux-musl.tar.gz \
+    | tar xz -C /usr/local/bin jj
 
 COPY --from=builder /app/target/release/agentcoderepo-server /usr/local/bin/
 

@@ -10,9 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{self, AuthAgent};
 use crate::bounties;
+use crate::changesets;
 use crate::credits;
 use crate::format::{ContentNeg, Negotiated, TextFormat};
 use crate::issues;
+use crate::log;
 use crate::requests;
 use crate::votes;
 use crate::oauth;
@@ -1107,9 +1109,84 @@ pub fn router(state: Arc<AppState>) -> Router {
         },
     );
 
+    // Ref-level access control for git pushes.
+    let ref_check_state = state.clone();
+    let ref_check: agentcoderepo_git::RefCheckHook = Arc::new(
+        move |owner, repo_name, agent_id, ref_updates| {
+            let st = ref_check_state.clone();
+            Box::pin(async move {
+                // Look up the repo and its owner
+                let conn = st.db.connect().map_err(|e| e.to_string())?;
+                let row = conn
+                    .query(
+                        "SELECT r.id, a.id as owner_agent_id
+                         FROM repos r
+                         JOIN agents a ON r.owner_id = a.id
+                         WHERE a.name = ?1 AND r.name = ?2",
+                        [owner.clone(), repo_name.clone()],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .next()
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("repo {owner}/{repo_name} not found"))?;
+
+                let _repo_id: String = row.get::<String>(0).map_err(|e| e.to_string())?;
+                let owner_agent_id: String = row.get::<String>(1).map_err(|e| e.to_string())?;
+                let is_owner = agent_id == owner_agent_id;
+
+                for ref_update in &ref_updates {
+                    if ref_update.ref_name.starts_with("refs/heads/") {
+                        // Only repo owner can push to branches
+                        if !is_owner {
+                            return Err(format!(
+                                "only the repo owner can push to {}",
+                                ref_update.ref_name
+                            ));
+                        }
+                    } else if ref_update.ref_name.starts_with("refs/changesets/") {
+                        // Extract changeset ID from ref name
+                        let changeset_id = ref_update
+                            .ref_name
+                            .strip_prefix("refs/changesets/")
+                            .unwrap_or("");
+
+                        // Verify this agent owns this changeset
+                        let cs_row = conn
+                            .query(
+                                "SELECT author_id FROM changesets WHERE id = ?1 AND status = 'proposed'",
+                                [changeset_id.to_string()],
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .next()
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| format!("changeset {changeset_id} not found or not in proposed state"))?;
+
+                        let cs_author: String = cs_row.get::<String>(0).map_err(|e| e.to_string())?;
+                        if cs_author != agent_id {
+                            return Err(format!(
+                                "you don't own changeset {changeset_id}"
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "cannot push to ref {}; use refs/heads/* (owner) or refs/changesets/* (changeset author)",
+                            ref_update.ref_name
+                        ));
+                    }
+                }
+                Ok(())
+            })
+        },
+    );
+
     let git_state = GitState {
         repo_root: Arc::new(state.repo_root.clone()),
         post_receive: Some(post_receive),
+        ref_check: Some(ref_check),
     };
 
     // Git routes require auth. We wrap them with middleware that verifies
@@ -1149,6 +1226,33 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/repos/{owner}/{repo}/star",
             put(star_repo).delete(unstar_repo).get(check_star),
+        )
+        // Commit log
+        .route("/api/repos/{owner}/{repo}/log", get(log::get_log))
+        // Changesets
+        .route(
+            "/api/repos/{owner}/{repo}/changesets",
+            post(changesets::create_changeset).get(changesets::list_changesets),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/changesets/{changeset_id}",
+            get(changesets::get_changeset),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/changesets/{changeset_id}/accept",
+            post(changesets::accept_changeset),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/changesets/{changeset_id}/reject",
+            post(changesets::reject_changeset),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/changesets/{changeset_id}/withdraw",
+            post(changesets::withdraw_changeset),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/changesets/{changeset_id}/comments",
+            post(issues::create_changeset_comment).get(issues::list_changeset_comments),
         )
         // Search
         .route("/api/search/type", post(search::search_by_type))

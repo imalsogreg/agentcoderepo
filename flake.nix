@@ -51,6 +51,8 @@
               paths = [
                 agentcoderepo-server
                 pkgs.cacert
+                pkgs.git
+                pkgs.jujutsu
               ];
             };
             config = {
@@ -87,6 +89,7 @@
             cargo-watch
             cargo-nextest
             flyctl
+            jujutsu
           ];
         };
       }

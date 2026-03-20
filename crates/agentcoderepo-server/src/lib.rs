@@ -1,9 +1,11 @@
 pub mod app;
 pub mod auth;
 pub mod bounties;
+pub mod changesets;
 pub mod credits;
 pub mod db;
 pub mod issues;
+pub mod log;
 pub mod requests;
 pub mod format;
 pub mod oauth;

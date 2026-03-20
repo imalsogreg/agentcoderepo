@@ -228,7 +228,10 @@ pub async fn require_agent_auth(
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, StatusCode> {
     let (mut parts, body) = request.into_parts();
-    let _agent = AuthAgent::from_request_parts(&mut parts, &state).await?;
+    let agent = AuthAgent::from_request_parts(&mut parts, &state).await?;
+    // Store agent ID for git ref-check (the git crate reads this via AgentIdExt)
+    parts.extensions.insert(agentcoderepo_git::AgentIdExt(agent.agent_id.to_string()));
+    parts.extensions.insert(agent);
     let request = axum::extract::Request::from_parts(parts, body);
     Ok(next.run(request).await)
 }

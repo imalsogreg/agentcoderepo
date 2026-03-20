@@ -53,35 +53,36 @@ async fn commit_file(dir: &Path, name: &str, content: &str, msg: &str) {
     git(dir, &["commit", "-m", msg]).await;
 }
 
-/// Register a test agent and return its bearer token.
-async fn setup_agent(harness: &TestHarness) -> String {
+/// Register a test agent, create a repo, return (token, remote_url).
+async fn setup(harness: &TestHarness, repo_name: &str) -> (String, String) {
     let agent = harness.registered_agent().await.unwrap();
-    agent.bearer_token()
+    agent
+        .post("/api/repos", &serde_json::json!({ "name": repo_name }))
+        .await
+        .unwrap();
+    let token = agent.bearer_token();
+    let remote_url = format!("{}/git/{}/{repo_name}", harness.base_url, agent.name);
+    (token, remote_url)
 }
 
 #[tokio::test]
 async fn push_and_clone_roundtrip() {
     let harness = TestHarness::start().await.unwrap();
-    let token = setup_agent(&harness).await;
+    let (token, remote_url) = setup(&harness, "test-repo").await;
     let tmp = tempfile::tempdir().unwrap();
 
-    // Create a local repo with a commit
     let repo_dir = tmp.path().join("source");
     std::fs::create_dir_all(&repo_dir).unwrap();
     init_repo(&repo_dir).await;
     commit_file(&repo_dir, "hello.txt", "hello world", "initial commit").await;
 
-    // Push to molthub
-    let remote_url = format!("{}/git/test-sponsor/test-repo", harness.base_url);
     git(&repo_dir, &["remote", "add", "origin", &remote_url]).await;
     git_auth(&repo_dir, &token, &["push", "origin", "main"]).await;
 
-    // Clone from molthub into a new directory
     let clone_dir = tmp.path().join("cloned");
     let clone_str = clone_dir.to_str().unwrap().to_string();
     git_auth(tmp.path(), &token, &["clone", &remote_url, &clone_str]).await;
 
-    // Verify the cloned content matches
     let content = std::fs::read_to_string(clone_dir.join("hello.txt")).unwrap();
     assert_eq!(content, "hello world");
 }
@@ -89,7 +90,7 @@ async fn push_and_clone_roundtrip() {
 #[tokio::test]
 async fn push_multiple_commits_and_clone() {
     let harness = TestHarness::start().await.unwrap();
-    let token = setup_agent(&harness).await;
+    let (token, remote_url) = setup(&harness, "multi-repo").await;
     let tmp = tempfile::tempdir().unwrap();
 
     let repo_dir = tmp.path().join("source");
@@ -98,11 +99,9 @@ async fn push_multiple_commits_and_clone() {
     commit_file(&repo_dir, "a.txt", "aaa", "first").await;
     commit_file(&repo_dir, "b.txt", "bbb", "second").await;
 
-    let remote_url = format!("{}/git/test-sponsor/multi-repo", harness.base_url);
     git(&repo_dir, &["remote", "add", "origin", &remote_url]).await;
     git_auth(&repo_dir, &token, &["push", "origin", "main"]).await;
 
-    // Clone and verify both files exist
     let clone_dir = tmp.path().join("cloned");
     let clone_str = clone_dir.to_str().unwrap().to_string();
     git_auth(tmp.path(), &token, &["clone", &remote_url, &clone_str]).await;
@@ -110,7 +109,6 @@ async fn push_multiple_commits_and_clone() {
     assert_eq!(std::fs::read_to_string(clone_dir.join("a.txt")).unwrap(), "aaa");
     assert_eq!(std::fs::read_to_string(clone_dir.join("b.txt")).unwrap(), "bbb");
 
-    // Verify commit log has both commits
     let log = git(&clone_dir, &["log", "--oneline"]).await;
     assert!(log.contains("first"));
     assert!(log.contains("second"));
@@ -119,25 +117,21 @@ async fn push_multiple_commits_and_clone() {
 #[tokio::test]
 async fn incremental_push() {
     let harness = TestHarness::start().await.unwrap();
-    let token = setup_agent(&harness).await;
+    let (token, remote_url) = setup(&harness, "incr-repo").await;
     let tmp = tempfile::tempdir().unwrap();
 
     let repo_dir = tmp.path().join("source");
     std::fs::create_dir_all(&repo_dir).unwrap();
     init_repo(&repo_dir).await;
 
-    let remote_url = format!("{}/git/test-sponsor/incr-repo", harness.base_url);
     git(&repo_dir, &["remote", "add", "origin", &remote_url]).await;
 
-    // First push
     commit_file(&repo_dir, "v1.txt", "version 1", "v1").await;
     git_auth(&repo_dir, &token, &["push", "origin", "main"]).await;
 
-    // Second push (incremental)
     commit_file(&repo_dir, "v2.txt", "version 2", "v2").await;
     git_auth(&repo_dir, &token, &["push", "origin", "main"]).await;
 
-    // Clone and verify both versions present
     let clone_dir = tmp.path().join("cloned");
     let clone_str = clone_dir.to_str().unwrap().to_string();
     git_auth(tmp.path(), &token, &["clone", &remote_url, &clone_str]).await;
