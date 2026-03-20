@@ -157,6 +157,18 @@ impl TestAgent {
         Ok(resp)
     }
 
+    /// Make an authenticated PUT request with a JSON body.
+    pub async fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<reqwest::Response> {
+        let resp = self
+            .client
+            .put(format!("{}{}", self.base_url, path))
+            .header("Authorization", format!("Bearer {}", self.bearer_token()))
+            .json(body)
+            .send()
+            .await?;
+        Ok(resp)
+    }
+
     /// Make an authenticated PUT request (no body).
     pub async fn put(&self, path: &str) -> Result<reqwest::Response> {
         let resp = self

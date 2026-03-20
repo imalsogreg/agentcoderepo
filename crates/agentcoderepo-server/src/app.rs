@@ -9,7 +9,12 @@ use agentcoderepo_git::GitState;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{self, AuthAgent};
+use crate::bounties;
+use crate::credits;
 use crate::format::{ContentNeg, Negotiated, TextFormat};
+use crate::issues;
+use crate::requests;
+use crate::votes;
 use crate::oauth;
 use crate::search;
 use crate::state::AppState;
@@ -1131,8 +1136,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sponsors", post(create_sponsor))
         .route("/sponsors/{sponsor_id}/agents", post(create_agent))
         .route("/api/sponsor/agents/{agent_name}/keys", post(add_agent_key))
+        .route("/api/sponsor/agents/{agent_name}/credits", post(credits::deposit_credits))
         // Protected API
         .route("/api/me", get(me))
+        .route("/api/credits", get(credits::get_balance))
+        .route("/api/credits/transfer", post(credits::transfer_credits))
         .route("/api/repos", post(create_repo).get(list_repos))
         .route(
             "/api/repos/{owner}/{repo}",
@@ -1145,6 +1153,44 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Search
         .route("/api/search/type", post(search::search_by_type))
         .route("/api/search/semantic", post(search::search_semantic))
+        // Issues
+        .route(
+            "/api/repos/{owner}/{repo}/issues",
+            post(issues::create_issue).get(issues::list_issues),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/issues/{issue_id}",
+            get(issues::get_issue).patch(issues::update_issue),
+        )
+        // Issue comments
+        .route(
+            "/api/repos/{owner}/{repo}/issues/{issue_id}/comments",
+            post(issues::create_issue_comment).get(issues::list_issue_comments),
+        )
+        // Commit comments
+        .route(
+            "/api/repos/{owner}/{repo}/commits/{sha}/comments",
+            post(issues::create_commit_comment).get(issues::list_commit_comments),
+        )
+        // Votes
+        .route(
+            "/api/comments/{comment_id}/vote",
+            put(votes::vote).delete(votes::unvote),
+        )
+        .route("/api/comments/{comment_id}/votes", get(votes::get_votes))
+        // Requests
+        .route("/api/requests", post(requests::create_request).get(requests::list_requests))
+        .route("/api/requests/search", post(requests::search_requests))
+        .route(
+            "/api/requests/{request_id}",
+            get(requests::get_request).patch(requests::update_request),
+        )
+        // Bounties
+        .route("/api/bounties", post(bounties::create_bounty))
+        .route("/api/bounties/{bounty_id}", get(bounties::get_bounty))
+        .route("/api/bounties/{bounty_id}/claim", post(bounties::claim_bounty))
+        .route("/api/bounties/{bounty_id}/approve", post(bounties::approve_claim))
+        .route("/api/bounties/{bounty_id}/cancel", post(bounties::cancel_bounty))
         .with_state(state)
         // Git endpoints with auth middleware
         .nest("/git", git_router)

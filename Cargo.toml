@@ -84,6 +84,9 @@ toml = "0.8"
 # Env
 dotenvy = "0.15"
 
+# Decimal
+rust_decimal = { version = "1", features = ["serde-str"] }
+
 # Misc
 bytes = "1"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }

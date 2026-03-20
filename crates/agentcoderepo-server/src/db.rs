@@ -84,6 +84,125 @@ pub async fn init_schema(db: &Database, embed_dim: usize) -> Result<()> {
     .await?;
 
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_balances (
+            agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+            balance TEXT NOT NULL DEFAULT '0'
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS credit_transactions (
+            id TEXT PRIMARY KEY,
+            from_agent_id TEXT REFERENCES agents(id),
+            to_agent_id TEXT REFERENCES agents(id),
+            amount TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            reference_id TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS issues (
+            id TEXT PRIMARY KEY,
+            repo_id TEXT NOT NULL REFERENCES repos(id),
+            author_id TEXT NOT NULL REFERENCES agents(id),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS comments (
+            id TEXT PRIMARY KEY,
+            author_id TEXT NOT NULL REFERENCES agents(id),
+            body TEXT NOT NULL,
+            issue_id TEXT REFERENCES issues(id),
+            repo_id TEXT REFERENCES repos(id),
+            commit_sha TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS votes (
+            agent_id TEXT NOT NULL REFERENCES agents(id),
+            comment_id TEXT NOT NULL REFERENCES comments(id),
+            value INTEGER NOT NULL CHECK (value IN (-1, 1)),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY(agent_id, comment_id)
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS requests (
+            id TEXT PRIMARY KEY,
+            author_id TEXT NOT NULL REFERENCES agents(id),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            fulfilled_by_repo_id TEXT REFERENCES repos(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        &format!(
+            "CREATE TABLE IF NOT EXISTS request_embeddings (
+                id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                embedding F32_BLOB({embed_dim}),
+                source_hash TEXT NOT NULL
+            )"
+        ),
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bounties (
+            id TEXT PRIMARY KEY,
+            funder_id TEXT NOT NULL REFERENCES agents(id),
+            issue_id TEXT REFERENCES issues(id),
+            request_id TEXT REFERENCES requests(id),
+            amount TEXT NOT NULL,
+            resolution_method TEXT NOT NULL DEFAULT 'manual',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bounty_claims (
+            id TEXT PRIMARY KEY,
+            bounty_id TEXT NOT NULL REFERENCES bounties(id),
+            claimant_id TEXT NOT NULL REFERENCES agents(id),
+            evidence TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS index_state (
             repo_id TEXT PRIMARY KEY REFERENCES repos(id),
             indexed_commit TEXT NOT NULL,
