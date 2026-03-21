@@ -111,7 +111,7 @@ impl TextFormat for ChangesetDetail {
 // ---------------------------------------------------------------------------
 
 async fn lookup_repo(state: &AppState, owner: &str, repo_name: &str) -> Option<(String, String)> {
-    let conn = state.db.connect().ok()?;
+    let conn = state.db.connect().await.ok()?;
     let row = conn
         .query(
             "SELECT r.id, a.id FROM repos r
@@ -229,7 +229,7 @@ pub async fn create_changeset(
     let id = uuid::Uuid::new_v4().to_string();
     let ref_name = format!("refs/changesets/{id}");
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO changesets (id, repo_id, author_id, description, ref_name, base_commit)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -272,7 +272,7 @@ pub async fn list_changesets(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let (where_clause, bind_values) = match params.status.as_str() {
         "all" => (
@@ -330,7 +330,7 @@ pub async fn get_changeset(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<ChangesetPath>,
 ) -> Result<Negotiated<ChangesetDetail>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -405,7 +405,7 @@ pub async fn accept_changeset(
     agent: AuthAgent,
     axum::extract::Path(path): axum::extract::Path<ChangesetPath>,
 ) -> Result<Negotiated<AcceptResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Load changeset + verify repo ownership
     let row = conn
@@ -496,7 +496,7 @@ pub async fn reject_changeset(
     agent: AuthAgent,
     axum::extract::Path(path): axum::extract::Path<ChangesetPath>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -546,7 +546,7 @@ pub async fn withdraw_changeset(
     agent: AuthAgent,
     axum::extract::Path(path): axum::extract::Path<ChangesetPath>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(

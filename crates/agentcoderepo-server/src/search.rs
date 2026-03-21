@@ -111,6 +111,7 @@ pub async fn search_by_type(
     let conn = state
         .db
         .connect()
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut rows = conn
@@ -211,6 +212,7 @@ pub async fn search_semantic(
     let conn = state
         .db
         .connect()
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut rows = conn

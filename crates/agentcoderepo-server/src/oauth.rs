@@ -103,7 +103,7 @@ pub async fn github_callback(
     let github_id_str = github_user.id.to_string();
 
     // Find or create sponsor
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let sponsor_id = {
         // Check if this GitHub user already has a sponsor
         let existing = conn
@@ -181,7 +181,7 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     if let Some(token) = extract_session_cookie(&headers) {
-        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let _ = conn
             .execute("DELETE FROM sessions WHERE token = ?1", [token])
             .await;
@@ -211,7 +211,7 @@ pub async fn get_session_sponsor(
     headers: &HeaderMap,
 ) -> Option<SessionSponsor> {
     let token = extract_session_cookie(headers)?;
-    let conn = state.db.connect().ok()?;
+    let conn = state.db.connect().await.ok()?;
     let row = conn
         .query(
             "SELECT s.id, s.name, COALESCE(sg.avatar_url, '')

@@ -133,7 +133,7 @@ pub async fn create_request(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     conn.execute(
         "INSERT INTO requests (id, author_id, title, body) VALUES (?1, ?2, ?3, ?4)",
@@ -180,7 +180,7 @@ pub async fn list_requests(
     neg: ContentNeg,
     Query(params): Query<ListRequestsParams>,
 ) -> Result<Negotiated<RequestList>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let (where_clause, bind_values) = match params.status.as_str() {
         "all" => ("".to_string(), vec![]),
@@ -230,7 +230,7 @@ pub async fn get_request(
     neg: ContentNeg,
     axum::extract::Path(request_id): axum::extract::Path<String>,
 ) -> Result<Negotiated<RequestResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -272,7 +272,7 @@ pub async fn update_request(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -373,7 +373,7 @@ pub async fn search_requests(
     let embed_json = serde_json::to_string(&query_embedding)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut rows = conn
         .query(

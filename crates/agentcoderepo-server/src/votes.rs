@@ -76,7 +76,7 @@ pub async fn vote(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     verify_comment(&conn, &comment_id).await?;
 
     // Upsert: INSERT OR REPLACE
@@ -99,7 +99,7 @@ pub async fn unvote(
     agent: AuthAgent,
     axum::extract::Path(comment_id): axum::extract::Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     verify_comment(&conn, &comment_id).await?;
 
     conn.execute(
@@ -119,7 +119,7 @@ pub async fn get_votes(
     agent: AuthAgent,
     axum::extract::Path(comment_id): axum::extract::Path<String>,
 ) -> Result<Negotiated<VoteSummary>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     verify_comment(&conn, &comment_id).await?;
 
     // Count up/down votes

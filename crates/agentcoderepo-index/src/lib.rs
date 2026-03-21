@@ -17,8 +17,6 @@ use agentcoderepo_types::semver::{SigChange, Version, diff_signatures, validate_
 use agentcoderepo_types::manifest::parse_manifest;
 use agentcoderepo_types::FunctionSig;
 use sha2::{Digest, Sha256};
-use turso::Database;
-
 use git::FileStatus;
 
 /// Index all changes from a push.
@@ -26,18 +24,16 @@ use git::FileStatus;
 /// Called synchronously after `git receive-pack` completes, before
 /// the HTTP response is returned to the client. Returns an error
 /// if semver validation fails (the push should be rejected).
-#[tracing::instrument(skip(llm, db))]
+#[tracing::instrument(skip(llm, conn))]
 pub async fn index_push(
     repo_path: &Path,
     repo_id: &str,
     old_sha: &str,
     new_sha: &str,
     llm: &dyn LlmClient,
-    db: &Database,
+    conn: &turso::Connection,
 ) -> Result<()> {
     tracing::info!(%old_sha, %new_sha, "starting index_push");
-
-    let conn = db.connect().context("failed to connect to db")?;
 
     // -----------------------------------------------------------------------
     // Step 0: Read agentcoderepo.toml from the new commit (optional)

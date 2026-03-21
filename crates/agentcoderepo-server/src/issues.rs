@@ -142,7 +142,7 @@ impl TextFormat for CommentList {
 // ---------------------------------------------------------------------------
 
 async fn lookup_repo_id(state: &AppState, owner: &str, repo_name: &str) -> Option<String> {
-    let conn = state.db.connect().ok()?;
+    let conn = state.db.connect().await.ok()?;
     let row = conn
         .query(
             "SELECT r.id FROM repos r
@@ -179,7 +179,7 @@ pub async fn create_issue(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let id = uuid::Uuid::new_v4().to_string();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     conn.execute(
         "INSERT INTO issues (id, repo_id, author_id, title, body) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -219,7 +219,7 @@ pub async fn list_issues(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let (where_clause, bind_values) = match params.status.as_str() {
         "all" => (
@@ -277,7 +277,7 @@ pub async fn get_issue(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<IssuePath>,
 ) -> Result<Negotiated<IssueResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -324,7 +324,7 @@ pub async fn update_issue(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Fetch issue and verify author
     let row = conn
@@ -388,7 +388,7 @@ pub async fn create_issue_comment(
     }
 
     // Verify issue exists in the right repo
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let issue_row = conn
         .query(
             "SELECT i.id FROM issues i
@@ -428,7 +428,7 @@ pub async fn list_issue_comments(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<IssuePath>,
 ) -> Result<Negotiated<CommentList>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify issue exists in the right repo
     let _issue = conn
@@ -492,7 +492,7 @@ pub async fn create_commit_comment(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let id = uuid::Uuid::new_v4().to_string();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     conn.execute(
         "INSERT INTO comments (id, author_id, body, repo_id, commit_sha) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -519,7 +519,7 @@ pub async fn list_commit_comments(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT c.id, a.name, c.body, c.created_at
@@ -561,7 +561,7 @@ pub async fn create_changeset_comment(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify changeset exists in the right repo
     let cs_row = conn
@@ -603,7 +603,7 @@ pub async fn list_changeset_comments(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<ChangesetCommentPath>,
 ) -> Result<Negotiated<CommentList>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify changeset exists in the right repo
     let _cs = conn

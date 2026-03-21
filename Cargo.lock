@@ -108,6 +108,7 @@ dependencies = [
  "base64 0.22.1",
  "dotenvy",
  "ed25519-dalek",
+ "hmac",
  "oauth2",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -4754,8 +4755,14 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7adb377630e2cfc1aa10d44cff1a05edfca9dea1bcf500211a24917f37dbf492"
 dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.8.1",
+ "hyper-tls",
+ "hyper-util",
  "mimalloc",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "turso_sdk_kit",

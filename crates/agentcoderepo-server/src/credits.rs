@@ -19,6 +19,7 @@ use crate::state::AppState;
 #[derive(Debug, Clone, Copy)]
 pub enum TxKind {
     Deposit,
+    Purchase,
     Transfer,
     BountyHold,
     BountyRelease,
@@ -29,6 +30,7 @@ impl TxKind {
     fn as_str(&self) -> &'static str {
         match self {
             TxKind::Deposit => "deposit",
+            TxKind::Purchase => "purchase",
             TxKind::Transfer => "transfer",
             TxKind::BountyHold => "bounty_hold",
             TxKind::BountyRelease => "bounty_release",
@@ -151,7 +153,7 @@ pub async fn get_balance(
     neg: ContentNeg,
     agent: AuthAgent,
 ) -> Result<Negotiated<BalanceResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     ensure_balance_row(&conn, &agent.agent_id.to_string()).await?;
     let balance = read_balance(&conn, &agent.agent_id.to_string()).await?;
 
@@ -187,7 +189,7 @@ pub async fn transfer_credits(
 ) -> Result<Negotiated<TransferResponse>, StatusCode> {
     let amount: Decimal = body.amount.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Look up target agent by name
     let target_row = conn
@@ -247,7 +249,7 @@ pub async fn deposit_credits(
 
     let amount: Decimal = body.amount.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify the agent belongs to this sponsor
     let row = conn

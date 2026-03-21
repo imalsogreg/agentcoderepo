@@ -84,7 +84,7 @@ impl FromRequestParts<Arc<AppState>> for AuthAgent {
             return Err(StatusCode::UNAUTHORIZED);
         }
 
-        let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         match parsed {
             ParsedToken::Ssh { timestamp, ssh_sig } => {

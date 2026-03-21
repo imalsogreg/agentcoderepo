@@ -5,7 +5,7 @@ use anyhow::Result;
 use axum::Router;
 use agentcoderepo_llm::mock::{MockLlm, EMBED_DIM};
 use agentcoderepo_server::{AppState, router};
-use agentcoderepo_server::state::OAuthConfig;
+use agentcoderepo_server::state::{OAuthConfig, StripeConfig};
 use agentcoderepo_store::mem::MemStore;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -20,6 +20,7 @@ static GITHUB_ID_COUNTER: AtomicU64 = AtomicU64::new(100_000);
 pub struct TestHarness {
     pub base_url: String,
     pub mock_llm: MockLlm,
+    state: Arc<AppState>,
     mock_github: MockServer,
     _handle: tokio::task::JoinHandle<()>,
     _repo_dir: tempfile::TempDir,
@@ -32,6 +33,15 @@ impl TestHarness {
     /// Set RUST_LOG to control verbosity, e.g.:
     ///   RUST_LOG=agentcoderepo_git=debug cargo test -- --nocapture
     pub async fn start() -> Result<Self> {
+        Self::start_inner(None).await
+    }
+
+    /// Start with Stripe webhook verification enabled (for testing webhooks).
+    pub async fn start_with_stripe(webhook_secret: &str) -> Result<Self> {
+        Self::start_inner(Some(webhook_secret.to_string())).await
+    }
+
+    async fn start_inner(stripe_webhook_secret: Option<String>) -> Result<Self> {
         // init is idempotent — only the first call takes effect
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -47,7 +57,8 @@ impl TestHarness {
 
         // Use a temp file for the DB to ensure all connections share the same data.
         let db_path = repo_dir.path().join("test.db");
-        let db = turso::Builder::new_local(db_path.to_str().unwrap()).build().await?;
+        let local_db = turso::Builder::new_local(db_path.to_str().unwrap()).build().await?;
+        let db = agentcoderepo_server::state::Db::Local(local_db);
 
         // Initialize database schema
         agentcoderepo_server::db::init_schema(&db, EMBED_DIM).await?;
@@ -72,8 +83,16 @@ impl TestHarness {
             embed_dim: EMBED_DIM,
             testing: true,
             github_oauth,
+            is_primary: true,
+            primary_machine_id: None,
+            stripe: stripe_webhook_secret.map(|secret| StripeConfig {
+                secret_key: "sk_test_not_used_in_tests".to_string(),
+                webhook_secret: secret,
+                base_url: base_url.clone(),
+            }),
         });
 
+        let state_clone = state.clone();
         let app: Router = router(state);
         let handle = tokio::spawn(async move {
             axum::serve(listener, app.into_make_service()).await.ok();
@@ -82,6 +101,7 @@ impl TestHarness {
         Ok(Self {
             base_url,
             mock_llm,
+            state: state_clone,
             mock_github,
             _handle: handle,
             _repo_dir: repo_dir,
@@ -104,6 +124,31 @@ impl TestHarness {
         let sponsor = self.login_github(&agent.sponsor_name, GITHUB_ID_COUNTER.fetch_add(1, Ordering::Relaxed)).await?;
         sponsor.register_agent(&mut agent).await?;
         Ok(agent)
+    }
+
+    /// Insert a stripe_purchases record directly into the DB for testing webhooks.
+    pub async fn insert_stripe_purchase(
+        &self,
+        id: &str,
+        stripe_session_id: &str,
+        sponsor_id: &str,
+        agent_id: &str,
+        amount: &str,
+    ) {
+        let conn = self.state.db.connect().await.unwrap();
+        conn.execute(
+            "INSERT INTO stripe_purchases (id, stripe_session_id, sponsor_id, agent_id, amount)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            [
+                id.to_string(),
+                stripe_session_id.to_string(),
+                sponsor_id.to_string(),
+                agent_id.to_string(),
+                amount.to_string(),
+            ],
+        )
+        .await
+        .unwrap();
     }
 
     /// Simulate a human logging in via GitHub OAuth.

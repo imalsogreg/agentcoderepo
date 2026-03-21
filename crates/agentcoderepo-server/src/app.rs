@@ -12,10 +12,12 @@ use crate::auth::{self, AuthAgent};
 use crate::bounties;
 use crate::changesets;
 use crate::credits;
+use crate::fly_replay;
 use crate::format::{ContentNeg, Negotiated, TextFormat};
 use crate::issues;
 use crate::log;
 use crate::requests;
+use crate::stripe;
 use crate::votes;
 use crate::oauth;
 use crate::search;
@@ -388,7 +390,7 @@ async fn create_sponsor(
         return Err(StatusCode::NOT_FOUND);
     }
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO sponsors (id, name) VALUES (?1, ?2)",
         [id.to_string(), body.name.clone()],
@@ -498,7 +500,7 @@ async fn create_agent(
         .ok_or(StatusCode::BAD_REQUEST)?;
 
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO agents (id, name, sponsor_id) VALUES (?1, ?2, ?3)",
         turso::params![id.to_string(), body.name.clone(), sponsor_id.clone()],
@@ -573,7 +575,7 @@ async fn add_agent_key(
     let pk_bytes = parse_ed25519_public_key(&body.public_key_base64)
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify the agent belongs to this sponsor
     let row = conn
@@ -614,7 +616,7 @@ async fn sponsor_agents(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT id, name FROM agents WHERE sponsor_id = ?1 ORDER BY name",
@@ -658,7 +660,7 @@ async fn sponsor_repos(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -755,7 +757,7 @@ async fn create_repo(
     }
 
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO repos (id, owner_id, name, description) VALUES (?1, ?2, ?3, ?4)",
         [
@@ -797,7 +799,7 @@ async fn list_repos(
     neg: ContentNeg,
     agent: AuthAgent,
 ) -> Result<Negotiated<RepoList>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -838,7 +840,7 @@ async fn get_repo(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
 ) -> Result<Negotiated<RepoResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -879,7 +881,7 @@ async fn update_repo(
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
     Json(body): Json<UpdateRepo>,
 ) -> Result<Negotiated<RepoResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify ownership
     let row = conn
@@ -935,7 +937,7 @@ async fn delete_repo(
     agent: AuthAgent,
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify ownership
     let row = conn
@@ -1002,7 +1004,7 @@ async fn star_repo(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT OR IGNORE INTO stars (agent_id, repo_id) VALUES (?1, ?2)",
         [agent.agent_id.to_string(), repo_id],
@@ -1027,7 +1029,7 @@ async fn unstar_repo(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "DELETE FROM stars WHERE agent_id = ?1 AND repo_id = ?2",
         [agent.agent_id.to_string(), repo_id],
@@ -1050,7 +1052,7 @@ async fn check_star(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row = conn
         .query(
             "SELECT 1 FROM stars WHERE agent_id = ?1 AND repo_id = ?2",
@@ -1067,7 +1069,7 @@ async fn check_star(
 
 /// Look up a repo's ID by owner agent name and repo name.
 async fn lookup_repo_id(state: &AppState, owner: &str, repo_name: &str) -> Option<String> {
-    let conn = state.db.connect().ok()?;
+    let conn = state.db.connect().await.ok()?;
     let row = conn
         .query(
             "SELECT r.id FROM repos r
@@ -1099,7 +1101,8 @@ pub fn router(state: Arc<AppState>) -> Router {
                         return Ok(());
                     }
                 };
-                agentcoderepo_index::index_push(&repo_path, &repo_id, &old_sha, &new_sha, st.llm.as_ref(), &st.db)
+                let conn = st.db.connect().await.map_err(|e| e.to_string())?;
+                agentcoderepo_index::index_push(&repo_path, &repo_id, &old_sha, &new_sha, st.llm.as_ref(), &conn)
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, %owner, %repo_name, "post-receive indexing failed");
@@ -1116,7 +1119,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             let st = ref_check_state.clone();
             Box::pin(async move {
                 // Look up the repo and its owner
-                let conn = st.db.connect().map_err(|e| e.to_string())?;
+                let conn = st.db.connect().await.map_err(|e| e.to_string())?;
                 let row = conn
                     .query(
                         "SELECT r.id, a.id as owner_agent_id
@@ -1214,6 +1217,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sponsors/{sponsor_id}/agents", post(create_agent))
         .route("/api/sponsor/agents/{agent_name}/keys", post(add_agent_key))
         .route("/api/sponsor/agents/{agent_name}/credits", post(credits::deposit_credits))
+        .route("/api/sponsor/agents/{agent_name}/buy-credits", post(stripe::create_checkout_session))
+        .route("/sponsors/agents/{agent_name}/buy-credits", get(stripe::buy_credits_form))
+        .route("/sponsors/agents/{agent_name}/buy-credits/success", get(stripe::buy_credits_success))
+        .route("/sponsors/agents/{agent_name}/buy-credits/cancel", get(stripe::buy_credits_cancel))
+        // Stripe webhook (no auth — signature-verified)
+        .route("/stripe/webhook", post(stripe::stripe_webhook))
         // Protected API
         .route("/api/me", get(me))
         .route("/api/credits", get(credits::get_balance))
@@ -1295,7 +1304,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/bounties/{bounty_id}/claim", post(bounties::claim_bounty))
         .route("/api/bounties/{bounty_id}/approve", post(bounties::approve_claim))
         .route("/api/bounties/{bounty_id}/cancel", post(bounties::cancel_bounty))
-        .with_state(state)
+        .with_state(state.clone())
         // Git endpoints with auth middleware
         .nest("/git", git_router)
+        // Replay write requests to primary on non-primary Fly.io instances
+        .layer(middleware::from_fn_with_state(
+            state,
+            fly_replay::replay_writes_to_primary,
+        ))
 }

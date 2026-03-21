@@ -4,6 +4,7 @@ pub mod bounties;
 pub mod changesets;
 pub mod credits;
 pub mod db;
+pub mod fly_replay;
 pub mod issues;
 pub mod log;
 pub mod requests;
@@ -11,6 +12,7 @@ pub mod format;
 pub mod oauth;
 pub mod search;
 pub mod state;
+pub mod stripe;
 pub mod votes;
 
 pub use app::router;

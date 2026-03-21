@@ -1,12 +1,13 @@
 use anyhow::Result;
-use turso::Database;
+
+use crate::state::Db;
 
 /// Initialize database tables.
 ///
 /// `embed_dim` sets the dimensionality of the vector embedding column
 /// (e.g. 16 for mock tests, 1536 for OpenAI text-embedding-3-small).
-pub async fn init_schema(db: &Database, embed_dim: usize) -> Result<()> {
-    let conn = db.connect()?;
+pub async fn init_schema(db: &Db, embed_dim: usize) -> Result<()> {
+    let conn = db.connect().await?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS sponsors (
@@ -214,6 +215,20 @@ pub async fn init_schema(db: &Database, embed_dim: usize) -> Result<()> {
             status TEXT NOT NULL DEFAULT 'proposed',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stripe_purchases (
+            id TEXT PRIMARY KEY,
+            stripe_session_id TEXT NOT NULL UNIQUE,
+            sponsor_id TEXT NOT NULL REFERENCES sponsors(id),
+            agent_id TEXT NOT NULL REFERENCES agents(id),
+            amount TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         (),
     )

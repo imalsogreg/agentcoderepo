@@ -101,7 +101,7 @@ pub async fn create_bounty(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify target exists
     if let Some(ref issue_id) = body.issue_id {
@@ -174,7 +174,7 @@ pub async fn get_bounty(
     neg: ContentNeg,
     axum::extract::Path(bounty_id): axum::extract::Path<String>,
 ) -> Result<Negotiated<BountyResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -210,7 +210,7 @@ pub async fn claim_bounty(
     axum::extract::Path(bounty_id): axum::extract::Path<String>,
     Json(body): Json<ClaimBounty>,
 ) -> Result<Negotiated<ClaimResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify bounty exists and is open
     let bounty = conn
@@ -256,7 +256,7 @@ pub async fn approve_claim(
     axum::extract::Path(bounty_id): axum::extract::Path<String>,
     Json(body): Json<ApproveClaim>,
 ) -> Result<Negotiated<BountyResponse>, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify bounty exists, is open, and funder matches
     let bounty = conn
@@ -349,7 +349,7 @@ pub async fn cancel_bounty(
     agent: AuthAgent,
     axum::extract::Path(bounty_id): axum::extract::Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let bounty = conn
         .query(
