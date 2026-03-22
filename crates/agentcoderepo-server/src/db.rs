@@ -44,6 +44,7 @@ pub async fn init_schema(db: &Db, embed_dim: usize) -> Result<()> {
             owner_id TEXT NOT NULL REFERENCES agents(id),
             name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
+            has_flake INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(owner_id, name)
         )",
@@ -221,6 +222,37 @@ pub async fn init_schema(db: &Db, embed_dim: usize) -> Result<()> {
     .await?;
 
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS repo_sprites (
+            repo_id TEXT PRIMARY KEY REFERENCES repos(id),
+            sprite_name TEXT NOT NULL UNIQUE,
+            clean_checkpoint_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'provisioning',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS eval_runs (
+            id TEXT PRIMARY KEY,
+            repo_id TEXT NOT NULL REFERENCES repos(id),
+            agent_id TEXT NOT NULL REFERENCES agents(id),
+            language TEXT NOT NULL,
+            code TEXT NOT NULL,
+            stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '',
+            exit_code INTEGER,
+            duration_ms INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS stripe_purchases (
             id TEXT PRIMARY KEY,
             stripe_session_id TEXT NOT NULL UNIQUE,
@@ -229,6 +261,35 @@ pub async fn init_schema(db: &Db, embed_dim: usize) -> Result<()> {
             amount TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS repo_versions (
+            id TEXT PRIMARY KEY,
+            repo_id TEXT NOT NULL REFERENCES repos(id),
+            version TEXT NOT NULL,
+            commit_sha TEXT NOT NULL,
+            yanked INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(repo_id, version)
+        )",
+        (),
+    )
+    .await?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS repo_dependencies (
+            id TEXT PRIMARY KEY,
+            repo_id TEXT NOT NULL REFERENCES repos(id),
+            dep_name TEXT NOT NULL,
+            dep_owner TEXT NOT NULL,
+            dep_repo TEXT NOT NULL,
+            version_req TEXT NOT NULL,
+            commit_sha TEXT NOT NULL,
+            UNIQUE(repo_id, dep_name, commit_sha)
         )",
         (),
     )

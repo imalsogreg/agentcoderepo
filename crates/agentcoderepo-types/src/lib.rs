@@ -9,7 +9,8 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// Re-export the type system at crate root for convenience.
+// Re-export for convenience.
+pub use semver::{Version, VersionReq};
 pub use ty::{
     Constraint, Effect, EffectSet, Field, FunctionSig, Kind, ModuleSignature, Prim, Ty, TyVar,
     TyVarBinding,

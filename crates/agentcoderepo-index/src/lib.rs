@@ -56,7 +56,61 @@ pub async fn index_push(
     };
 
     // -----------------------------------------------------------------------
-    // Step 0b: Load previous version and signatures (if any)
+    // Step 0b: Check for flake.nix (enables eval support)
+    // -----------------------------------------------------------------------
+    let has_flake = git::read_file_at_commit(repo_path, new_sha, "flake.nix")
+        .await
+        .is_ok();
+    if has_flake {
+        tracing::info!("flake.nix found — eval support available");
+    }
+    conn.execute(
+        "UPDATE repos SET has_flake = ?1 WHERE id = ?2",
+        [if has_flake { "1" } else { "0" }.to_string(), repo_id.to_string()],
+    )
+    .await
+    .context("failed to update has_flake")?;
+
+    // -----------------------------------------------------------------------
+    // Step 0d: Store declared dependencies
+    // -----------------------------------------------------------------------
+    if let Some(ref manifest) = new_manifest {
+        if !manifest.dependencies.is_empty() {
+            tracing::info!(dep_count = manifest.dependencies.len(), "storing declared dependencies");
+            // Clear old deps for this commit
+            conn.execute(
+                "DELETE FROM repo_dependencies WHERE repo_id = ?1 AND commit_sha = ?2",
+                [repo_id.to_string(), new_sha.to_string()],
+            )
+            .await
+            .context("failed to clear old dependencies")?;
+
+            for dep in &manifest.dependencies {
+                let parts: Vec<&str> = dep.repo.splitn(2, '/').collect();
+                if parts.len() == 2 {
+                    let dep_id = uuid::Uuid::new_v4().to_string();
+                    conn.execute(
+                        "INSERT OR IGNORE INTO repo_dependencies (id, repo_id, dep_name, dep_owner, dep_repo, version_req, commit_sha)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        [
+                            dep_id,
+                            repo_id.to_string(),
+                            dep.name.clone(),
+                            parts[0].to_string(),
+                            parts[1].to_string(),
+                            dep.version_req.to_string(),
+                            new_sha.to_string(),
+                        ],
+                    )
+                    .await
+                    .context("failed to insert dependency")?;
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 0e: Load previous version and signatures (if any)
     // -----------------------------------------------------------------------
     let prev_version = load_previous_version(&conn, repo_id).await;
     let prev_sigs = load_previous_signatures(&conn, repo_id).await;
@@ -289,10 +343,23 @@ pub async fn index_push(
     conn.execute(
         "INSERT OR REPLACE INTO index_state (repo_id, indexed_commit, version, indexed_at)
          VALUES (?1, ?2, ?3, datetime('now'))",
-        [repo_id.to_string(), new_sha.to_string(), version_str],
+        [repo_id.to_string(), new_sha.to_string(), version_str.clone()],
     )
     .await
     .context("failed to update index state")?;
+
+    // Record in version history (if this push has a version)
+    if !version_str.is_empty() {
+        let version_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT OR IGNORE INTO repo_versions (id, repo_id, version, commit_sha)
+             VALUES (?1, ?2, ?3, ?4)",
+            [version_id, repo_id.to_string(), version_str, new_sha.to_string()],
+        )
+        .await
+        .context("failed to record version history")?;
+        tracing::info!("recorded version in history");
+    }
 
     tracing::info!("indexing complete");
     Ok(())

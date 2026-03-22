@@ -5,7 +5,7 @@ use anyhow::Result;
 use axum::Router;
 use agentcoderepo_llm::mock::{MockLlm, EMBED_DIM};
 use agentcoderepo_server::{AppState, router};
-use agentcoderepo_server::state::{OAuthConfig, StripeConfig};
+use agentcoderepo_server::state::{OAuthConfig, SpritesConfig, StripeConfig};
 use agentcoderepo_store::mem::MemStore;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -33,15 +33,23 @@ impl TestHarness {
     /// Set RUST_LOG to control verbosity, e.g.:
     ///   RUST_LOG=agentcoderepo_git=debug cargo test -- --nocapture
     pub async fn start() -> Result<Self> {
-        Self::start_inner(None).await
+        Self::start_inner(None, None).await
     }
 
     /// Start with Stripe webhook verification enabled (for testing webhooks).
     pub async fn start_with_stripe(webhook_secret: &str) -> Result<Self> {
-        Self::start_inner(Some(webhook_secret.to_string())).await
+        Self::start_inner(Some(webhook_secret.to_string()), None).await
     }
 
-    async fn start_inner(stripe_webhook_secret: Option<String>) -> Result<Self> {
+    /// Start with Sprites API configured (pointing at a wiremock server).
+    pub async fn start_with_sprites(sprites_base_url: &str) -> Result<Self> {
+        Self::start_inner(None, Some(sprites_base_url.to_string())).await
+    }
+
+    async fn start_inner(
+        stripe_webhook_secret: Option<String>,
+        sprites_base_url: Option<String>,
+    ) -> Result<Self> {
         // init is idempotent — only the first call takes effect
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -85,6 +93,10 @@ impl TestHarness {
             github_oauth,
             is_primary: true,
             primary_machine_id: None,
+            sprites: sprites_base_url.map(|url| SpritesConfig {
+                token: "test-sprites-token".to_string(),
+                base_url: url,
+            }),
             stripe: stripe_webhook_secret.map(|secret| StripeConfig {
                 secret_key: "sk_test_not_used_in_tests".to_string(),
                 webhook_secret: secret,
@@ -124,6 +136,118 @@ impl TestHarness {
         let sponsor = self.login_github(&agent.sponsor_name, GITHUB_ID_COUNTER.fetch_add(1, Ordering::Relaxed)).await?;
         sponsor.register_agent(&mut agent).await?;
         Ok(agent)
+    }
+
+    /// Insert a repo_sprites record directly into the DB for testing eval.
+    pub async fn insert_repo_sprite(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        sprite_name: &str,
+        checkpoint_id: &str,
+    ) {
+        let conn = self.state.db.connect().await.unwrap();
+        let row = conn
+            .query(
+                "SELECT r.id FROM repos r
+                 JOIN agents a ON r.owner_id = a.id
+                 WHERE a.name = ?1 AND r.name = ?2",
+                [owner.to_string(), repo_name.to_string()],
+            )
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_id: String = row.get::<String>(0).unwrap();
+
+        conn.execute(
+            "INSERT INTO repo_sprites (repo_id, sprite_name, clean_checkpoint_id, status)
+             VALUES (?1, ?2, ?3, 'ready')",
+            [repo_id, sprite_name.to_string(), checkpoint_id.to_string()],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Insert a repo_versions record for testing the resolver.
+    pub async fn insert_repo_version(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        version: &str,
+        commit_sha: &str,
+    ) {
+        let conn = self.state.db.connect().await.unwrap();
+        let row = conn
+            .query(
+                "SELECT r.id FROM repos r
+                 JOIN agents a ON r.owner_id = a.id
+                 WHERE a.name = ?1 AND r.name = ?2",
+                [owner.to_string(), repo_name.to_string()],
+            )
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_id: String = row.get::<String>(0).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+
+        conn.execute(
+            "INSERT OR IGNORE INTO repo_versions (id, repo_id, version, commit_sha)
+             VALUES (?1, ?2, ?3, ?4)",
+            [id, repo_id, version.to_string(), commit_sha.to_string()],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Insert a repo_dependencies record for testing the resolver.
+    pub async fn insert_repo_dependency(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        commit_sha: &str,
+        dep_name: &str,
+        dep_owner: &str,
+        dep_repo: &str,
+        version_req: &str,
+    ) {
+        let conn = self.state.db.connect().await.unwrap();
+        let row = conn
+            .query(
+                "SELECT r.id FROM repos r
+                 JOIN agents a ON r.owner_id = a.id
+                 WHERE a.name = ?1 AND r.name = ?2",
+                [owner.to_string(), repo_name.to_string()],
+            )
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_id: String = row.get::<String>(0).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+
+        conn.execute(
+            "INSERT OR IGNORE INTO repo_dependencies (id, repo_id, dep_name, dep_owner, dep_repo, version_req, commit_sha)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            [
+                id,
+                repo_id,
+                dep_name.to_string(),
+                dep_owner.to_string(),
+                dep_repo.to_string(),
+                version_req.to_string(),
+                commit_sha.to_string(),
+            ],
+        )
+        .await
+        .unwrap();
     }
 
     /// Insert a stripe_purchases record directly into the DB for testing webhooks.

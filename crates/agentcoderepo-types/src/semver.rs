@@ -50,6 +50,137 @@ impl fmt::Display for Version {
 }
 
 // ---------------------------------------------------------------------------
+// Version requirements (ranges)
+// ---------------------------------------------------------------------------
+
+/// A version requirement that matches a range of versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionReq {
+    /// ^1.2.3 — compatible updates
+    Caret(Version),
+    /// ~1.2.3 — patch-level updates
+    Tilde(Version),
+    /// Exact version match
+    Exact(Version),
+    /// >= version
+    Gte(Version),
+    /// > version
+    Gt(Version),
+    /// < version
+    Lt(Version),
+    /// <= version
+    Lte(Version),
+    /// Intersection of multiple requirements
+    And(Vec<VersionReq>),
+}
+
+impl VersionReq {
+    /// Parse a version requirement string.
+    ///
+    /// Supported formats:
+    /// - `^1.2.3` (caret)
+    /// - `~1.2.3` (tilde)
+    /// - `>=1.0.0` / `>1.0.0` / `<2.0.0` / `<=2.0.0`
+    /// - `1.2.3` (exact)
+    /// - `>=1.0, <2.0` (compound, comma-separated)
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+
+        // Compound: comma-separated
+        if s.contains(',') {
+            let parts: Vec<VersionReq> = s
+                .split(',')
+                .map(|p| VersionReq::parse(p.trim()))
+                .collect::<Option<Vec<_>>>()?;
+            if parts.len() == 1 {
+                return Some(parts.into_iter().next().unwrap());
+            }
+            return Some(VersionReq::And(parts));
+        }
+
+        if let Some(rest) = s.strip_prefix('^') {
+            return Some(VersionReq::Caret(Version::parse(rest.trim())?));
+        }
+        if let Some(rest) = s.strip_prefix('~') {
+            return Some(VersionReq::Tilde(Version::parse(rest.trim())?));
+        }
+        if let Some(rest) = s.strip_prefix(">=") {
+            return Some(VersionReq::Gte(Version::parse(rest.trim())?));
+        }
+        if let Some(rest) = s.strip_prefix('>') {
+            return Some(VersionReq::Gt(Version::parse(rest.trim())?));
+        }
+        if let Some(rest) = s.strip_prefix("<=") {
+            return Some(VersionReq::Lte(Version::parse(rest.trim())?));
+        }
+        if let Some(rest) = s.strip_prefix('<') {
+            return Some(VersionReq::Lt(Version::parse(rest.trim())?));
+        }
+
+        // Bare version = exact
+        Some(VersionReq::Exact(Version::parse(s)?))
+    }
+
+    /// Check if a version satisfies this requirement.
+    pub fn matches(&self, v: &Version) -> bool {
+        match self {
+            VersionReq::Exact(req) => v == req,
+
+            VersionReq::Caret(req) => {
+                if v < req {
+                    return false;
+                }
+                if req.major > 0 {
+                    // ^1.2.3 → >=1.2.3, <2.0.0
+                    v.major == req.major
+                } else if req.minor > 0 {
+                    // ^0.2.3 → >=0.2.3, <0.3.0
+                    v.major == 0 && v.minor == req.minor
+                } else {
+                    // ^0.0.3 → >=0.0.3, <0.0.4
+                    v.major == 0 && v.minor == 0 && v.patch == req.patch
+                }
+            }
+
+            VersionReq::Tilde(req) => {
+                // ~1.2.3 → >=1.2.3, <1.3.0
+                v >= req && v.major == req.major && v.minor == req.minor
+            }
+
+            VersionReq::Gte(req) => v >= req,
+            VersionReq::Gt(req) => v > req,
+            VersionReq::Lt(req) => v < req,
+            VersionReq::Lte(req) => v <= req,
+
+            VersionReq::And(reqs) => reqs.iter().all(|r| r.matches(v)),
+        }
+    }
+}
+
+impl fmt::Display for VersionReq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VersionReq::Caret(v) => write!(f, "^{v}"),
+            VersionReq::Tilde(v) => write!(f, "~{v}"),
+            VersionReq::Exact(v) => write!(f, "{v}"),
+            VersionReq::Gte(v) => write!(f, ">={v}"),
+            VersionReq::Gt(v) => write!(f, ">{v}"),
+            VersionReq::Lt(v) => write!(f, "<{v}"),
+            VersionReq::Lte(v) => write!(f, "<={v}"),
+            VersionReq::And(reqs) => {
+                for (i, r) in reqs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{r}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bump classification
 // ---------------------------------------------------------------------------
 
@@ -339,6 +470,70 @@ mod tests {
         let v = |s: &str| Version::parse(s).unwrap();
         assert!(validate_bump(&v("1.0.0"), &v("1.1.0"), &diff).is_err());
         assert!(validate_bump(&v("1.0.0"), &v("2.0.0"), &diff).is_ok());
+    }
+
+    // VersionReq tests
+    #[test]
+    fn parse_caret() {
+        assert_eq!(
+            VersionReq::parse("^1.2.3"),
+            Some(VersionReq::Caret(Version::new(1, 2, 3)))
+        );
+    }
+
+    #[test]
+    fn parse_tilde() {
+        assert_eq!(
+            VersionReq::parse("~0.4.0"),
+            Some(VersionReq::Tilde(Version::new(0, 4, 0)))
+        );
+    }
+
+    #[test]
+    fn parse_compound() {
+        let req = VersionReq::parse(">=1.0.0, <2.0.0").unwrap();
+        assert!(matches!(req, VersionReq::And(_)));
+    }
+
+    #[test]
+    fn caret_major() {
+        let req = VersionReq::Caret(Version::new(1, 2, 0));
+        assert!(req.matches(&Version::new(1, 2, 0)));
+        assert!(req.matches(&Version::new(1, 9, 9)));
+        assert!(!req.matches(&Version::new(2, 0, 0)));
+        assert!(!req.matches(&Version::new(1, 1, 0)));
+    }
+
+    #[test]
+    fn caret_zero_minor() {
+        let req = VersionReq::Caret(Version::new(0, 2, 0));
+        assert!(req.matches(&Version::new(0, 2, 0)));
+        assert!(req.matches(&Version::new(0, 2, 9)));
+        assert!(!req.matches(&Version::new(0, 3, 0)));
+    }
+
+    #[test]
+    fn caret_zero_zero() {
+        let req = VersionReq::Caret(Version::new(0, 0, 3));
+        assert!(req.matches(&Version::new(0, 0, 3)));
+        assert!(!req.matches(&Version::new(0, 0, 4)));
+    }
+
+    #[test]
+    fn tilde_matches() {
+        let req = VersionReq::Tilde(Version::new(1, 2, 0));
+        assert!(req.matches(&Version::new(1, 2, 0)));
+        assert!(req.matches(&Version::new(1, 2, 9)));
+        assert!(!req.matches(&Version::new(1, 3, 0)));
+    }
+
+    #[test]
+    fn compound_range() {
+        let req = VersionReq::parse(">=1.0.0, <2.0.0").unwrap();
+        assert!(req.matches(&Version::new(1, 0, 0)));
+        assert!(req.matches(&Version::new(1, 9, 9)));
+        assert!(!req.matches(&Version::new(2, 0, 0)));
+        assert!(!req.matches(&Version::new(0, 9, 0)));
     }
 
     #[test]

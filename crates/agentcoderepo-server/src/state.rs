@@ -45,6 +45,12 @@ impl OAuthConfig {
     }
 }
 
+/// Sprites configuration for sandboxed code evaluation.
+pub struct SpritesConfig {
+    pub token: String,
+    pub base_url: String,
+}
+
 /// Stripe configuration for credit purchases.
 pub struct StripeConfig {
     pub secret_key: String,
@@ -73,4 +79,6 @@ pub struct AppState {
     pub primary_machine_id: Option<String>,
     /// Stripe config for credit purchases. None if not configured.
     pub stripe: Option<StripeConfig>,
+    /// Sprites config for sandboxed code evaluation. None if not configured.
+    pub sprites: Option<SpritesConfig>,
 }

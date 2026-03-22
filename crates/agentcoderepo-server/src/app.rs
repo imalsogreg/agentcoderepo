@@ -12,12 +12,15 @@ use crate::auth::{self, AuthAgent};
 use crate::bounties;
 use crate::changesets;
 use crate::credits;
+use crate::eval;
 use crate::fly_replay;
 use crate::format::{ContentNeg, Negotiated, TextFormat};
 use crate::issues;
 use crate::log;
 use crate::requests;
+use crate::resolve;
 use crate::stripe;
+use crate::versions;
 use crate::votes;
 use crate::oauth;
 use crate::search;
@@ -664,7 +667,8 @@ async fn sponsor_repos(
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
-                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0)
+                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0),
+                    r.has_flake
              FROM repos r
              JOIN agents a ON r.owner_id = a.id
              WHERE a.sponsor_id = ?1
@@ -683,6 +687,7 @@ async fn sponsor_repos(
             description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             stars: row.get::<i64>(5).unwrap_or(0),
+            eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
         });
     }
 
@@ -707,12 +712,14 @@ struct RepoResponse {
     name: String,
     description: String,
     stars: i64,
+    eval_supported: bool,
     created_at: String,
 }
 
 impl TextFormat for RepoResponse {
     fn to_text(&self) -> String {
-        let mut s = format!("{}/{}  {} star{}\n", self.owner_name, self.name, self.stars, if self.stars == 1 { "" } else { "s" });
+        let eval = if self.eval_supported { " [eval]" } else { "" };
+        let mut s = format!("{}/{}  {} star{}{eval}\n", self.owner_name, self.name, self.stars, if self.stars == 1 { "" } else { "s" });
         if !self.description.is_empty() {
             s.push_str(&format!("  {}\n", self.description));
         }
@@ -789,6 +796,7 @@ async fn create_repo(
         name: body.name,
         description: body.description,
         stars: 0,
+        eval_supported: false,
         created_at: String::new(),
     }))
 }
@@ -803,7 +811,8 @@ async fn list_repos(
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
-                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0)
+                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0),
+                    r.has_flake
              FROM repos r
              JOIN agents a ON r.owner_id = a.id
              WHERE r.owner_id = ?1
@@ -822,6 +831,7 @@ async fn list_repos(
             description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             stars: row.get::<i64>(5).unwrap_or(0),
+            eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
         });
     }
 
@@ -844,7 +854,8 @@ async fn get_repo(
     let row = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
-                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0)
+                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0),
+                    r.has_flake
              FROM repos r
              JOIN agents a ON r.owner_id = a.id
              WHERE a.name = ?1 AND r.name = ?2",
@@ -864,6 +875,7 @@ async fn get_repo(
         description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         stars: row.get::<i64>(5).unwrap_or(0),
+        eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
     }))
 }
 
@@ -887,7 +899,8 @@ async fn update_repo(
     let row = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
-                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0)
+                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0),
+                    r.has_flake
              FROM repos r
              JOIN agents a ON r.owner_id = a.id
              WHERE a.name = ?1 AND r.name = ?2",
@@ -906,6 +919,7 @@ async fn update_repo(
     let mut description: String = row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let created_at: String = row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let stars: i64 = row.get::<i64>(5).unwrap_or(0);
+    let eval_supported = row.get::<i64>(6).unwrap_or(0) != 0;
 
     if owner_name != agent.agent_name {
         return Err(StatusCode::FORBIDDEN);
@@ -927,6 +941,7 @@ async fn update_repo(
         name: repo_name,
         description,
         stars,
+        eval_supported,
         created_at,
     }))
 }
@@ -1085,6 +1100,177 @@ async fn lookup_repo_id(state: &AppState, owner: &str, repo_name: &str) -> Optio
     row.get::<String>(0).ok()
 }
 
+// ---------------------------------------------------------------------------
+// Public discovery endpoints
+// ---------------------------------------------------------------------------
+
+/// GET /api/repos/explore — list all repos (public, paginated)
+async fn explore_repos(
+    State(state): State<Arc<AppState>>,
+    neg: ContentNeg,
+    axum::extract::Query(params): axum::extract::Query<ExploreParams>,
+) -> Result<Negotiated<RepoList>, StatusCode> {
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    let mut rows = conn
+        .query(
+            "SELECT r.id, a.name, r.name, r.description, r.created_at,
+                    COALESCE((SELECT COUNT(*) FROM stars WHERE repo_id = r.id), 0),
+                    r.has_flake
+             FROM repos r
+             JOIN agents a ON r.owner_id = a.id
+             ORDER BY r.created_at DESC
+             LIMIT ?1 OFFSET ?2",
+            turso::params![limit as i64, offset as i64],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut repos = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        repos.push(RepoResponse {
+            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            owner_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            name: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            stars: row.get::<i64>(5).unwrap_or(0),
+            eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
+        });
+    }
+
+    Ok(neg.ok(RepoList(repos)))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ExploreParams {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct AgentProfile {
+    name: String,
+    sponsor_name: String,
+    repo_count: i64,
+    stars_received: i64,
+}
+
+impl TextFormat for AgentProfile {
+    fn to_text(&self) -> String {
+        format!(
+            "{} (sponsored by {})\n  {} repos, {} stars received\n",
+            self.name, self.sponsor_name, self.repo_count, self.stars_received,
+        )
+    }
+}
+
+/// GET /api/agents/{name} — public agent profile
+async fn get_agent_profile(
+    State(state): State<Arc<AppState>>,
+    neg: ContentNeg,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<Negotiated<AgentProfile>, StatusCode> {
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let row = conn
+        .query(
+            "SELECT a.name, s.name as sponsor_name,
+                    (SELECT COUNT(*) FROM repos WHERE owner_id = a.id),
+                    COALESCE((SELECT COUNT(*) FROM stars st
+                              JOIN repos r ON st.repo_id = r.id
+                              WHERE r.owner_id = a.id), 0)
+             FROM agents a
+             JOIN sponsors s ON a.sponsor_id = s.id
+             WHERE a.name = ?1",
+            [name],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(neg.ok(AgentProfile {
+        name: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        sponsor_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        repo_count: row.get::<i64>(2).unwrap_or(0),
+        stars_received: row.get::<i64>(3).unwrap_or(0),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Key revocation
+// ---------------------------------------------------------------------------
+
+/// DELETE /api/sponsor/agents/{name}/keys
+/// Remove a public key from an agent (sponsor session required).
+async fn revoke_agent_key(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(agent_name): axum::extract::Path<String>,
+    Json(body): Json<RevokeKeyRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let session = oauth::get_session_sponsor(&state, &headers)
+        .await
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let pk_bytes = parse_ed25519_public_key(&body.public_key_base64)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Verify agent belongs to sponsor
+    let row = conn
+        .query(
+            "SELECT id FROM agents WHERE name = ?1 AND sponsor_id = ?2",
+            [agent_name.clone(), session.id],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let agent_id: String = row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Ensure the agent has at least 2 keys (don't revoke the last one)
+    let key_count_row = conn
+        .query(
+            "SELECT COUNT(*) FROM agent_keys WHERE agent_id = ?1",
+            [agent_id.clone()],
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let key_count: i64 = key_count_row.get::<i64>(0).unwrap_or(0);
+    if key_count <= 1 {
+        return Err(StatusCode::CONFLICT); // Can't revoke last key
+    }
+
+    conn.execute(
+        "DELETE FROM agent_keys WHERE agent_id = ?1 AND public_key_bytes = ?2",
+        turso::params![agent_id, pk_bytes],
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RevokeKeyRequest {
+    public_key_base64: String,
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     // Build the post-receive hook that triggers indexing.
     // This closure captures AppState and calls into agentcoderepo-index.
@@ -1215,7 +1401,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sponsors/agents/new", get(register_agent_form))
         .route("/sponsors", post(create_sponsor))
         .route("/sponsors/{sponsor_id}/agents", post(create_agent))
-        .route("/api/sponsor/agents/{agent_name}/keys", post(add_agent_key))
+        .route("/api/sponsor/agents/{agent_name}/keys", post(add_agent_key).delete(revoke_agent_key))
         .route("/api/sponsor/agents/{agent_name}/credits", post(credits::deposit_credits))
         .route("/api/sponsor/agents/{agent_name}/buy-credits", post(stripe::create_checkout_session))
         .route("/sponsors/agents/{agent_name}/buy-credits", get(stripe::buy_credits_form))
@@ -1223,6 +1409,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sponsors/agents/{agent_name}/buy-credits/cancel", get(stripe::buy_credits_cancel))
         // Stripe webhook (no auth — signature-verified)
         .route("/stripe/webhook", post(stripe::stripe_webhook))
+        // Public discovery
+        .route("/api/repos/explore", get(explore_repos))
+        .route("/api/agents/{name}", get(get_agent_profile))
         // Protected API
         .route("/api/me", get(me))
         .route("/api/credits", get(credits::get_balance))
@@ -1236,6 +1425,13 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/repos/{owner}/{repo}/star",
             put(star_repo).delete(unstar_repo).get(check_star),
         )
+        // Versions
+        .route("/api/repos/{owner}/{repo}/versions", get(versions::list_versions))
+        .route("/api/repos/{owner}/{repo}/versions/{version}/yank", post(versions::yank_version))
+        // Eval
+        .route("/api/repos/{owner}/{repo}/eval", post(eval::eval_code))
+        .route("/api/repos/{owner}/{repo}/sprites/provision", post(eval::provision_sprite))
+        .route("/api/repos/{owner}/{repo}/sprites/status", get(eval::sprite_status))
         // Commit log
         .route("/api/repos/{owner}/{repo}/log", get(log::get_log))
         // Changesets
@@ -1298,6 +1494,9 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/requests/{request_id}",
             get(requests::get_request).patch(requests::update_request),
         )
+        // Resolver
+        .route("/api/resolve", post(resolve::resolve_deps))
+        .route("/api/repos/{owner}/{repo}/resolve", post(resolve::resolve_repo_deps))
         // Bounties
         .route("/api/bounties", post(bounties::create_bounty))
         .route("/api/bounties/{bounty_id}", get(bounties::get_bounty))

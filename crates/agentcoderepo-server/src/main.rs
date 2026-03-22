@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
 use agentcoderepo_server::{AppState, router};
-use agentcoderepo_server::state::{Db, OAuthConfig, StripeConfig};
+use agentcoderepo_server::state::{Db, OAuthConfig, SpritesConfig, StripeConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -116,6 +116,12 @@ async fn main() -> Result<()> {
                 None
             }
         },
+        sprites: std::env::var("SPRITES_TOKEN").ok().map(|token| {
+            let base_url = std::env::var("SPRITES_BASE_URL")
+                .unwrap_or_else(|_| "https://api.sprites.dev".to_string());
+            tracing::info!("Sprites configured");
+            SpritesConfig { token, base_url }
+        }),
     });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
