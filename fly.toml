@@ -19,6 +19,7 @@ primary_region = 'sjc'
 [[env]]
   BASE_URL = 'https://agentcoderepo.fly.dev'
   TURSO_URL = 'libsql://agent-code-repo-prod-imalsogreg.aws-us-west-2.turso.io'
+  SENTRY_TRACES_SAMPLE_RATE=1.0
 
 [[vm]]
   memory = '1gb'

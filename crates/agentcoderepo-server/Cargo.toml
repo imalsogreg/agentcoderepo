@@ -34,6 +34,7 @@ rust_decimal.workspace = true
 sha2.workspace = true
 hmac.workspace = true
 posthog-rs = "0.4.7"
+sentry = { version = "0.46", features = ["tower", "tower-axum-matched-path", "tracing"] }
 
 [dev-dependencies]
 agentcoderepo-test.workspace = true

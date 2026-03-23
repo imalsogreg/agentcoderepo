@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use agentcoderepo_server::{AppState, router};
@@ -12,8 +13,30 @@ async fn main() -> Result<()> {
     // Load .env file if present (ignored if missing)
     let _ = dotenvy::dotenv();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+    // Initialize Sentry — must be done before tracing subscriber.
+    // The guard must be held for the lifetime of the application.
+    let _sentry_guard = sentry::init((
+        std::env::var("SENTRY_DSN").ok(),
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: std::env::var("SENTRY_TRACES_SAMPLE_RATE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.2),
+            environment: std::env::var("SENTRY_ENVIRONMENT")
+                .ok()
+                .map(Into::into),
+            ..Default::default()
+        },
+    ));
+
+    // Set up tracing with Sentry integration.
+    // The sentry-tracing layer converts tracing spans into Sentry transactions/spans,
+    // and tracing events into Sentry breadcrumbs/events.
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry::integrations::tracing::layer())
         .init();
 
     let repo_root = std::env::var("AGENTCODEREPO_REPO_ROOT")

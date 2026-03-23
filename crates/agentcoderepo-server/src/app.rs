@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use agentcoderepo_git::GitState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use agentcoderepo_git::GitState;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{self, AuthAgent};
@@ -17,14 +17,14 @@ use crate::fly_replay;
 use crate::format::{ContentNeg, Negotiated, TextFormat};
 use crate::issues;
 use crate::log;
+use crate::oauth;
 use crate::requests;
 use crate::resolve;
+use crate::search;
+use crate::state::AppState;
 use crate::stripe;
 use crate::versions;
 use crate::votes;
-use crate::oauth;
-use crate::search;
-use crate::state::AppState;
 
 async fn health() -> &'static str {
     "ok"
@@ -393,7 +393,11 @@ async fn create_sponsor(
         return Err(StatusCode::NOT_FOUND);
     }
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO sponsors (id, name) VALUES (?1, ?2)",
         [id.to_string(), body.name.clone()],
@@ -458,7 +462,9 @@ fn parse_ed25519_public_key(input: &str) -> Option<Vec<u8>> {
     // SSH format: "ssh-ed25519 <base64-blob> [optional comment]"
     if let Some(rest) = input.strip_prefix("ssh-ed25519 ") {
         let b64_part = rest.split_whitespace().next()?;
-        let blob = base64::engine::general_purpose::STANDARD.decode(b64_part).ok()?;
+        let blob = base64::engine::general_purpose::STANDARD
+            .decode(b64_part)
+            .ok()?;
 
         // SSH wire format: u32 len + "ssh-ed25519" + u32 len + 32-byte key
         // The key type string is 11 bytes ("ssh-ed25519")
@@ -471,12 +477,10 @@ fn parse_ed25519_public_key(input: &str) -> Option<Vec<u8>> {
     }
 
     // Raw base64: decode and check length
-    let bytes = base64::engine::general_purpose::STANDARD.decode(input).ok()?;
-    if bytes.len() == 32 {
-        Some(bytes)
-    } else {
-        None
-    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(input)
+        .ok()?;
+    if bytes.len() == 32 { Some(bytes) } else { None }
 }
 
 #[tracing::instrument(skip(state, body, headers), fields(sponsor_id = %sponsor_id))]
@@ -499,11 +503,15 @@ async fn create_agent(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let pk_bytes = parse_ed25519_public_key(&body.public_key_base64)
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let pk_bytes =
+        parse_ed25519_public_key(&body.public_key_base64).ok_or(StatusCode::BAD_REQUEST)?;
 
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO agents (id, name, sponsor_id) VALUES (?1, ?2, ?3)",
         turso::params![id.to_string(), body.name.clone(), sponsor_id.clone()],
@@ -575,10 +583,14 @@ async fn add_agent_key(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let pk_bytes = parse_ed25519_public_key(&body.public_key_base64)
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let pk_bytes =
+        parse_ed25519_public_key(&body.public_key_base64).ok_or(StatusCode::BAD_REQUEST)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify the agent belongs to this sponsor
     let row = conn
@@ -593,7 +605,9 @@ async fn add_agent_key(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let agent_id: String = row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let agent_id: String = row
+        .get::<String>(0)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     conn.execute(
         "INSERT INTO agent_keys (public_key_bytes, agent_id) VALUES (?1, ?2)",
@@ -619,7 +633,11 @@ async fn sponsor_agents(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT id, name FROM agents WHERE sponsor_id = ?1 ORDER BY name",
@@ -629,10 +647,18 @@ async fn sponsor_agents(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut agents = Vec::new();
-    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         agents.push(AgentResponse {
-            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            id: row
+                .get::<String>(0)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            name: row
+                .get::<String>(1)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             sponsor_id: sponsor.id.clone(),
         });
     }
@@ -649,7 +675,10 @@ impl TextFormat for AgentList {
         if self.0.is_empty() {
             return "(no agents)\n".to_string();
         }
-        self.0.iter().map(|a| format!("{}\t{}\n", a.id, a.name)).collect()
+        self.0
+            .iter()
+            .map(|a| format!("{}\t{}\n", a.id, a.name))
+            .collect()
     }
 }
 
@@ -663,7 +692,11 @@ async fn sponsor_repos(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -679,13 +712,27 @@ async fn sponsor_repos(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut repos = Vec::new();
-    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         repos.push(RepoResponse {
-            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            owner_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            name: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            id: row
+                .get::<String>(0)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            owner_name: row
+                .get::<String>(1)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            name: row
+                .get::<String>(2)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            description: row
+                .get::<String>(3)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            created_at: row
+                .get::<String>(4)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             stars: row.get::<i64>(5).unwrap_or(0),
             eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
         });
@@ -719,7 +766,13 @@ struct RepoResponse {
 impl TextFormat for RepoResponse {
     fn to_text(&self) -> String {
         let eval = if self.eval_supported { " [eval]" } else { "" };
-        let mut s = format!("{}/{}  {} star{}{eval}\n", self.owner_name, self.name, self.stars, if self.stars == 1 { "" } else { "s" });
+        let mut s = format!(
+            "{}/{}  {} star{}{eval}\n",
+            self.owner_name,
+            self.name,
+            self.stars,
+            if self.stars == 1 { "" } else { "s" }
+        );
         if !self.description.is_empty() {
             s.push_str(&format!("  {}\n", self.description));
         }
@@ -744,8 +797,11 @@ impl TextFormat for RepoList {
         for repo in &self.0 {
             s.push_str(&format!(
                 "{}/{}  {}  ({} star{})\n",
-                repo.owner_name, repo.name, repo.description,
-                repo.stars, if repo.stars == 1 { "" } else { "s" }
+                repo.owner_name,
+                repo.name,
+                repo.description,
+                repo.stars,
+                if repo.stars == 1 { "" } else { "s" }
             ));
         }
         s
@@ -764,7 +820,11 @@ async fn create_repo(
     }
 
     let id = uuid::Uuid::new_v4();
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT INTO repos (id, owner_id, name, description) VALUES (?1, ?2, ?3, ?4)",
         [
@@ -781,7 +841,9 @@ async fn create_repo(
     })?;
 
     // Initialize the bare repo on disk
-    if let Err(e) = agentcoderepo_git::ensure_bare_repo(&state.repo_root, &agent.agent_name, &body.name).await {
+    if let Err(e) =
+        agentcoderepo_git::ensure_bare_repo(&state.repo_root, &agent.agent_name, &body.name).await
+    {
         tracing::error!(error = ?e, "failed to init bare repo on disk");
         // Best-effort cleanup of the DB row
         let _ = conn
@@ -807,7 +869,11 @@ async fn list_repos(
     neg: ContentNeg,
     agent: AuthAgent,
 ) -> Result<Negotiated<RepoList>, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -823,13 +889,27 @@ async fn list_repos(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut repos = Vec::new();
-    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         repos.push(RepoResponse {
-            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            owner_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            name: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            id: row
+                .get::<String>(0)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            owner_name: row
+                .get::<String>(1)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            name: row
+                .get::<String>(2)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            description: row
+                .get::<String>(3)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            created_at: row
+                .get::<String>(4)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             stars: row.get::<i64>(5).unwrap_or(0),
             eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
         });
@@ -850,7 +930,11 @@ async fn get_repo(
     neg: ContentNeg,
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
 ) -> Result<Negotiated<RepoResponse>, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row = conn
         .query(
             "SELECT r.id, a.name, r.name, r.description, r.created_at,
@@ -869,11 +953,21 @@ async fn get_repo(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(neg.ok(RepoResponse {
-        id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        owner_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        name: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        id: row
+            .get::<String>(0)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        owner_name: row
+            .get::<String>(1)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        name: row
+            .get::<String>(2)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        description: row
+            .get::<String>(3)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        created_at: row
+            .get::<String>(4)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         stars: row.get::<i64>(5).unwrap_or(0),
         eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
     }))
@@ -893,7 +987,11 @@ async fn update_repo(
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
     Json(body): Json<UpdateRepo>,
 ) -> Result<Negotiated<RepoResponse>, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify ownership
     let row = conn
@@ -913,11 +1011,21 @@ async fn update_repo(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let repo_id: String = row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let owner_name: String = row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let repo_name: String = row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut description: String = row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let created_at: String = row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let repo_id: String = row
+        .get::<String>(0)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let owner_name: String = row
+        .get::<String>(1)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let repo_name: String = row
+        .get::<String>(2)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut description: String = row
+        .get::<String>(3)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let created_at: String = row
+        .get::<String>(4)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let stars: i64 = row.get::<i64>(5).unwrap_or(0);
     let eval_supported = row.get::<i64>(6).unwrap_or(0) != 0;
 
@@ -952,7 +1060,11 @@ async fn delete_repo(
     agent: AuthAgent,
     axum::extract::Path(path): axum::extract::Path<RepoPath>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify ownership
     let row = conn
@@ -970,8 +1082,12 @@ async fn delete_repo(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let repo_id: String = row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let owner_name: String = row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let repo_id: String = row
+        .get::<String>(0)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let owner_name: String = row
+        .get::<String>(1)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if owner_name != agent.agent_name {
         return Err(StatusCode::FORBIDDEN);
@@ -982,7 +1098,10 @@ async fn delete_repo(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Remove bare repo from disk
-    let repo_dir = state.repo_root.join(&path.owner).join(format!("{}.git", &path.repo));
+    let repo_dir = state
+        .repo_root
+        .join(&path.owner)
+        .join(format!("{}.git", &path.repo));
     if repo_dir.exists() {
         if let Err(e) = tokio::fs::remove_dir_all(&repo_dir).await {
             tracing::warn!(error = %e, "failed to remove repo directory");
@@ -1003,7 +1122,11 @@ struct StarResponse {
 
 impl TextFormat for StarResponse {
     fn to_text(&self) -> String {
-        if self.starred { "starred\n".to_string() } else { "not starred\n".to_string() }
+        if self.starred {
+            "starred\n".to_string()
+        } else {
+            "not starred\n".to_string()
+        }
     }
 }
 
@@ -1019,7 +1142,11 @@ async fn star_repo(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "INSERT OR IGNORE INTO stars (agent_id, repo_id) VALUES (?1, ?2)",
         [agent.agent_id.to_string(), repo_id],
@@ -1044,7 +1171,11 @@ async fn unstar_repo(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     conn.execute(
         "DELETE FROM stars WHERE agent_id = ?1 AND repo_id = ?2",
         [agent.agent_id.to_string(), repo_id],
@@ -1067,7 +1198,11 @@ async fn check_star(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row = conn
         .query(
             "SELECT 1 FROM stars WHERE agent_id = ?1 AND repo_id = ?2",
@@ -1079,7 +1214,9 @@ async fn check_star(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(neg.ok(StarResponse { starred: row.is_some() }))
+    Ok(neg.ok(StarResponse {
+        starred: row.is_some(),
+    }))
 }
 
 /// Look up a repo's ID by owner agent name and repo name.
@@ -1110,7 +1247,11 @@ async fn explore_repos(
     neg: ContentNeg,
     axum::extract::Query(params): axum::extract::Query<ExploreParams>,
 ) -> Result<Negotiated<RepoList>, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
@@ -1129,13 +1270,27 @@ async fn explore_repos(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut repos = Vec::new();
-    while let Some(row) = rows.next().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         repos.push(RepoResponse {
-            id: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            owner_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            name: row.get::<String>(2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            description: row.get::<String>(3).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            created_at: row.get::<String>(4).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            id: row
+                .get::<String>(0)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            owner_name: row
+                .get::<String>(1)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            name: row
+                .get::<String>(2)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            description: row
+                .get::<String>(3)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            created_at: row
+                .get::<String>(4)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             stars: row.get::<i64>(5).unwrap_or(0),
             eval_supported: row.get::<i64>(6).unwrap_or(0) != 0,
         });
@@ -1173,7 +1328,11 @@ async fn get_agent_profile(
     neg: ContentNeg,
     axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<Negotiated<AgentProfile>, StatusCode> {
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = conn
         .query(
@@ -1195,8 +1354,12 @@ async fn get_agent_profile(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(neg.ok(AgentProfile {
-        name: row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        sponsor_name: row.get::<String>(1).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        name: row
+            .get::<String>(0)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        sponsor_name: row
+            .get::<String>(1)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         repo_count: row.get::<i64>(2).unwrap_or(0),
         stars_received: row.get::<i64>(3).unwrap_or(0),
     }))
@@ -1218,10 +1381,14 @@ async fn revoke_agent_key(
         .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let pk_bytes = parse_ed25519_public_key(&body.public_key_base64)
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let pk_bytes =
+        parse_ed25519_public_key(&body.public_key_base64).ok_or(StatusCode::BAD_REQUEST)?;
 
-    let conn = state.db.connect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = state
+        .db
+        .connect()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Verify agent belongs to sponsor
     let row = conn
@@ -1236,7 +1403,9 @@ async fn revoke_agent_key(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let agent_id: String = row.get::<String>(0).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let agent_id: String = row
+        .get::<String>(0)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Ensure the agent has at least 2 keys (don't revoke the last one)
     let key_count_row = conn
@@ -1288,12 +1457,19 @@ pub fn router(state: Arc<AppState>) -> Router {
                     }
                 };
                 let conn = st.db.connect().await.map_err(|e| e.to_string())?;
-                agentcoderepo_index::index_push(&repo_path, &repo_id, &old_sha, &new_sha, st.llm.as_ref(), &conn)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!(error = %e, %owner, %repo_name, "post-receive indexing failed");
-                        e.to_string()
-                    })
+                agentcoderepo_index::index_push(
+                    &repo_path,
+                    &repo_id,
+                    &old_sha,
+                    &new_sha,
+                    st.llm.as_ref(),
+                    &conn,
+                )
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, %owner, %repo_name, "post-receive indexing failed");
+                    e.to_string()
+                })
             })
         },
     );
@@ -1354,11 +1530,10 @@ pub fn router(state: Arc<AppState>) -> Router {
                             .map_err(|e| e.to_string())?
                             .ok_or_else(|| format!("changeset {changeset_id} not found or not in proposed state"))?;
 
-                        let cs_author: String = cs_row.get::<String>(0).map_err(|e| e.to_string())?;
+                        let cs_author: String =
+                            cs_row.get::<String>(0).map_err(|e| e.to_string())?;
                         if cs_author != agent_id {
-                            return Err(format!(
-                                "you don't own changeset {changeset_id}"
-                            ));
+                            return Err(format!("you don't own changeset {changeset_id}"));
                         }
                     } else {
                         return Err(format!(
@@ -1380,11 +1555,10 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     // Git routes require auth. We wrap them with middleware that verifies
     // the bearer token using the shared database.
-    let git_router = agentcoderepo_git::routes(git_state)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_agent_auth,
-        ));
+    let git_router = agentcoderepo_git::routes(git_state).layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_agent_auth,
+    ));
 
     Router::new()
         .route("/", get(root))
@@ -1401,12 +1575,30 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sponsors/agents/new", get(register_agent_form))
         .route("/sponsors", post(create_sponsor))
         .route("/sponsors/{sponsor_id}/agents", post(create_agent))
-        .route("/api/sponsor/agents/{agent_name}/keys", post(add_agent_key).delete(revoke_agent_key))
-        .route("/api/sponsor/agents/{agent_name}/credits", post(credits::deposit_credits))
-        .route("/api/sponsor/agents/{agent_name}/buy-credits", post(stripe::create_checkout_session))
-        .route("/sponsors/agents/{agent_name}/buy-credits", get(stripe::buy_credits_form))
-        .route("/sponsors/agents/{agent_name}/buy-credits/success", get(stripe::buy_credits_success))
-        .route("/sponsors/agents/{agent_name}/buy-credits/cancel", get(stripe::buy_credits_cancel))
+        .route(
+            "/api/sponsor/agents/{agent_name}/keys",
+            post(add_agent_key).delete(revoke_agent_key),
+        )
+        .route(
+            "/api/sponsor/agents/{agent_name}/credits",
+            post(credits::deposit_credits),
+        )
+        .route(
+            "/api/sponsor/agents/{agent_name}/buy-credits",
+            post(stripe::create_checkout_session),
+        )
+        .route(
+            "/sponsors/agents/{agent_name}/buy-credits",
+            get(stripe::buy_credits_form),
+        )
+        .route(
+            "/sponsors/agents/{agent_name}/buy-credits/success",
+            get(stripe::buy_credits_success),
+        )
+        .route(
+            "/sponsors/agents/{agent_name}/buy-credits/cancel",
+            get(stripe::buy_credits_cancel),
+        )
         // Stripe webhook (no auth — signature-verified)
         .route("/stripe/webhook", post(stripe::stripe_webhook))
         // Public discovery
@@ -1426,12 +1618,24 @@ pub fn router(state: Arc<AppState>) -> Router {
             put(star_repo).delete(unstar_repo).get(check_star),
         )
         // Versions
-        .route("/api/repos/{owner}/{repo}/versions", get(versions::list_versions))
-        .route("/api/repos/{owner}/{repo}/versions/{version}/yank", post(versions::yank_version))
+        .route(
+            "/api/repos/{owner}/{repo}/versions",
+            get(versions::list_versions),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/versions/{version}/yank",
+            post(versions::yank_version),
+        )
         // Eval
         .route("/api/repos/{owner}/{repo}/eval", post(eval::eval_code))
-        .route("/api/repos/{owner}/{repo}/sprites/provision", post(eval::provision_sprite))
-        .route("/api/repos/{owner}/{repo}/sprites/status", get(eval::sprite_status))
+        .route(
+            "/api/repos/{owner}/{repo}/sprites/provision",
+            post(eval::provision_sprite),
+        )
+        .route(
+            "/api/repos/{owner}/{repo}/sprites/status",
+            get(eval::sprite_status),
+        )
         // Commit log
         .route("/api/repos/{owner}/{repo}/log", get(log::get_log))
         // Changesets
@@ -1488,7 +1692,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/comments/{comment_id}/votes", get(votes::get_votes))
         // Requests
-        .route("/api/requests", post(requests::create_request).get(requests::list_requests))
+        .route(
+            "/api/requests",
+            post(requests::create_request).get(requests::list_requests),
+        )
         .route("/api/requests/search", post(requests::search_requests))
         .route(
             "/api/requests/{request_id}",
@@ -1496,13 +1703,26 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         // Resolver
         .route("/api/resolve", post(resolve::resolve_deps))
-        .route("/api/repos/{owner}/{repo}/resolve", post(resolve::resolve_repo_deps))
+        .route(
+            "/api/repos/{owner}/{repo}/resolve",
+            post(resolve::resolve_repo_deps),
+        )
         // Bounties
         .route("/api/bounties", post(bounties::create_bounty))
         .route("/api/bounties/{bounty_id}", get(bounties::get_bounty))
-        .route("/api/bounties/{bounty_id}/claim", post(bounties::claim_bounty))
-        .route("/api/bounties/{bounty_id}/approve", post(bounties::approve_claim))
-        .route("/api/bounties/{bounty_id}/cancel", post(bounties::cancel_bounty))
+        .route(
+            "/api/bounties/{bounty_id}/claim",
+            post(bounties::claim_bounty),
+        )
+        .route(
+            "/api/bounties/{bounty_id}/approve",
+            post(bounties::approve_claim),
+        )
+        .route(
+            "/api/bounties/{bounty_id}/cancel",
+            post(bounties::cancel_bounty),
+        )
+        .route("/error", panic!("Test Sentry panic handler"))
         .with_state(state.clone())
         // Git endpoints with auth middleware
         .nest("/git", git_router)
@@ -1511,4 +1731,17 @@ pub fn router(state: Arc<AppState>) -> Router {
             state,
             fly_replay::replay_writes_to_primary,
         ))
+        // Sentry: isolate hubs per request + create transactions
+        .layer(sentry::integrations::tower::NewSentryLayer::new_from_top())
+        .layer(sentry::integrations::tower::SentryHttpLayer::new().enable_transaction())
+        // Create a root tracing span per request — sentry-tracing picks this up
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                |request: &axum::extract::Request| {
+                    let method = request.method().as_str();
+                    let uri = request.uri().path();
+                    tracing::info_span!("http.request", %method, %uri)
+                },
+            ),
+        )
 }

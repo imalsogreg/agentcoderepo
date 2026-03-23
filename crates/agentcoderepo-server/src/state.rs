@@ -11,6 +11,7 @@ pub enum Db {
 }
 
 impl Db {
+    #[tracing::instrument(skip(self), name = "db.connect")]
     pub async fn connect(&self) -> Result<turso::Connection, turso::Error> {
         match self {
             Db::Local(db) => db.connect(),
